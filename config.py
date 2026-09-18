@@ -24,7 +24,7 @@ def load_config() -> dict:
         except Exception as e:
             print(f"[!] Warning reading config.json: {e}")
 
-    # Environment variables override config.json (essential for cloud platforms like Render)
+    # Environment variables override config.json (essential for cloud platforms like Railway and Render)
     if os.environ.get("TELEGRAM_API_ID"):
         config["api_id"] = int(os.environ["TELEGRAM_API_ID"])
     if os.environ.get("TELEGRAM_API_HASH"):
@@ -33,7 +33,14 @@ def load_config() -> dict:
         config["bot_token"] = os.environ["TELEGRAM_BOT_TOKEN"].strip()
     if os.environ.get("PORT"):
         config["port"] = int(os.environ["PORT"])
-    if os.environ.get("RENDER_EXTERNAL_URL"):
+
+    # Auto-detect Cloud Public Domains
+    if os.environ.get("RAILWAY_PUBLIC_DOMAIN"):
+        domain = os.environ["RAILWAY_PUBLIC_DOMAIN"].strip()
+        if not domain.startswith("http"):
+            domain = "https://" + domain
+        config["custom_domain"] = domain
+    elif os.environ.get("RENDER_EXTERNAL_URL"):
         config["custom_domain"] = os.environ["RENDER_EXTERNAL_URL"].strip()
     elif os.environ.get("CUSTOM_DOMAIN"):
         config["custom_domain"] = os.environ["CUSTOM_DOMAIN"].strip()
