@@ -1,4 +1,4 @@
-﻿import json
+import json
 import os
 import sys
 
@@ -34,16 +34,19 @@ def load_config() -> dict:
     if os.environ.get("PORT"):
         config["port"] = int(os.environ["PORT"])
 
-    # Auto-detect Cloud Public Domains
-    if os.environ.get("RAILWAY_PUBLIC_DOMAIN"):
+    # Public Domain configuration (CUSTOM_DOMAIN overrides auto-detected cloud domains)
+    if os.environ.get("CUSTOM_DOMAIN"):
+        custom = os.environ["CUSTOM_DOMAIN"].strip()
+        if not custom.startswith("http"):
+            custom = "https://" + custom
+        config["custom_domain"] = custom
+    elif os.environ.get("RAILWAY_PUBLIC_DOMAIN"):
         domain = os.environ["RAILWAY_PUBLIC_DOMAIN"].strip()
         if not domain.startswith("http"):
             domain = "https://" + domain
         config["custom_domain"] = domain
     elif os.environ.get("RENDER_EXTERNAL_URL"):
         config["custom_domain"] = os.environ["RENDER_EXTERNAL_URL"].strip()
-    elif os.environ.get("CUSTOM_DOMAIN"):
-        config["custom_domain"] = os.environ["CUSTOM_DOMAIN"].strip()
 
     if os.environ.get("TELEGRAM_CHAT_IDS"):
         try:
