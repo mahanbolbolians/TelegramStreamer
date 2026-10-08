@@ -1,4 +1,4 @@
-﻿import aiosqlite
+import aiosqlite
 import os
 from typing import Optional, Dict, Any
 
@@ -12,6 +12,17 @@ async def init_db():
                 chat_id INTEGER,
                 message_id INTEGER,
                 file_id TEXT,
+                file_name TEXT,
+                file_size INTEGER,
+                mime_type TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS compressed_media (
+                id TEXT PRIMARY KEY,
+                original_link_id TEXT,
+                file_path TEXT,
                 file_name TEXT,
                 file_size INTEGER,
                 mime_type TEXT,
@@ -38,3 +49,37 @@ async def get_media(link_id: str) -> Optional[Dict[str, Any]]:
             if row:
                 return dict(row)
             return None
+
+async def save_compressed(comp_id: str, original_link_id: str, file_path: str,
+                          file_name: str, file_size: int, mime_type: str):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("""
+            INSERT OR REPLACE INTO compressed_media 
+            (id, original_link_id, file_path, file_name, file_size, mime_type)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (comp_id, original_link_id, file_path, file_name, file_size, mime_type))
+        await db.commit()
+
+async def get_compressed(comp_id: str) -> Optional[Dict[str, Any]]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT * FROM compressed_media WHERE id = ?", (comp_id,)) as cursor:
+            row = await cursor.fetchone()
+            if row:
+                return dict(row)
+            return None
+
+async def get_compressed_by_original(original_link_id: str) -> Optional[Dict[str, Any]]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT * FROM compressed_media WHERE original_link_id = ?", (original_link_id,)) as cursor:
+            row = await cursor.fetchone()
+            if row:
+                return dict(row)
+            return None
+
+async def delete_compressed(comp_id: str):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("DELETE FROM compressed_media WHERE id = ?", (comp_id,))
+        await db.commit()
+

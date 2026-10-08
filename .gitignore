@@ -1,4 +1,4 @@
-﻿# Virtual Environment
+# Virtual Environment
 venv/
 .venv/
 env/
@@ -18,3 +18,7 @@ config.json
 
 # Packages
 *.zip
+
+# Cache and temp data
+data/
+

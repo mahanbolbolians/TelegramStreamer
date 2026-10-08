@@ -1,4 +1,5 @@
-﻿import re
+import os
+import re
 import urllib.parse
 import logging
 from aiohttp import web
@@ -316,6 +317,106 @@ async def handle_download(request: web.Request) -> web.StreamResponse:
 
     return response
 
+async def handle_compressed_download(request: web.Request) -> web.StreamResponse:
+    comp_id = request.match_info.get("comp_id")
+    if not comp_id:
+        return web.Response(status=404, text="Invalid compressed link ID")
+
+    record = await database.get_compressed(comp_id)
+    if not record:
+        return web.Response(status=404, text="Compressed file link expired or not found")
+
+    file_path = record.get("file_path", "")
+    if not os.path.exists(file_path):
+        return web.Response(status=404, text="Compressed file has expired from cache.")
+
+    file_size = os.path.getsize(file_path)
+    file_name = record.get("file_name") or f"compressed_{comp_id}.mp4"
+    mime_type = record.get("mime_type") or "video/mp4"
+
+    safe_name = make_safe_filename(file_name)
+    encoded_name = urllib.parse.quote(safe_name)
+
+    headers = {
+        "Accept-Ranges": "bytes",
+        "Content-Type": mime_type,
+        "Content-Disposition": f'attachment; filename="{safe_name}"; filename*=UTF-8\'\'{encoded_name}',
+        "Cache-Control": "public, max-age=86400",
+    }
+
+    range_header = request.headers.get("Range")
+    if range_header:
+        match = RANGE_REGEX.match(range_header.strip())
+        if not match:
+            return web.Response(
+                status=416,
+                headers={"Content-Range": f"bytes */{file_size}"}
+            )
+
+        start_str, end_str = match.groups()
+
+        if start_str and end_str:
+            start = int(start_str)
+            end = int(end_str)
+        elif start_str:
+            start = int(start_str)
+            end = file_size - 1
+        elif end_str:
+            suffix_len = int(end_str)
+            start = max(0, file_size - suffix_len)
+            end = file_size - 1
+        else:
+            start = 0
+            end = file_size - 1
+
+        if start > end or start >= file_size:
+            return web.Response(
+                status=416,
+                headers={"Content-Range": f"bytes */{file_size}"}
+            )
+
+        end = min(end, file_size - 1)
+        content_length = end - start + 1
+
+        headers["Content-Range"] = f"bytes {start}-{end}/{file_size}"
+        headers["Content-Length"] = str(content_length)
+        status_code = 206
+    else:
+        start = 0
+        end = file_size - 1
+        content_length = file_size
+        headers["Content-Length"] = str(file_size)
+        status_code = 200
+
+    if request.method == "HEAD":
+        return web.Response(status=status_code, headers=headers)
+
+    response = web.StreamResponse(status=status_code, headers=headers)
+    await response.prepare(request)
+
+    logger.info(f"Streaming compressed {file_name} bytes {start}-{end} to {request.remote}")
+
+    try:
+        with open(file_path, "rb") as f:
+            f.seek(start)
+            remaining = content_length
+            chunk_size = 64 * 1024
+            while remaining > 0:
+                read_size = min(chunk_size, remaining)
+                data = f.read(read_size)
+                if not data:
+                    break
+                await response.write(data)
+                remaining -= len(data)
+
+        await response.write_eof()
+    except (ConnectionResetError, ConnectionAbortedError, web.GracefulExit):
+        pass
+    except Exception as e:
+        logger.error(f"Error streaming compressed {file_name}: {e}")
+
+    return response
+
 def create_app(client, bot_me, port: int) -> web.Application:
     app = web.Application()
     app["tg_client"] = client
@@ -324,7 +425,10 @@ def create_app(client, bot_me, port: int) -> web.Application:
 
     app.router.add_route("*", "/", handle_index)
     app.router.add_route("*", "/status", handle_status)
+    app.router.add_route("*", "/dl/c/{comp_id}/{filename}", handle_compressed_download)
+    app.router.add_route("*", "/dl/c/{comp_id}", handle_compressed_download)
     app.router.add_route("*", "/dl/{link_id}/{filename}", handle_download)
     app.router.add_route("*", "/dl/{link_id}", handle_download)
 
     return app
+
