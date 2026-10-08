@@ -1,4 +1,5 @@
-﻿hydrogram>=0.2.0
+hydrogram>=0.2.0
 aiohttp>=3.9.0
 cryptg>=0.6.0
 pycryptodome>=3.20.0
+imageio-ffmpeg>=0.5.1

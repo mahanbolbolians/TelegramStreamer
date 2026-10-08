@@ -13,8 +13,36 @@ TEMP_INPUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data"
 os.makedirs(COMPRESSED_DIR, exist_ok=True)
 os.makedirs(TEMP_INPUT_DIR, exist_ok=True)
 
+def get_ffmpeg_binary() -> Optional[str]:
+    """Locates the ffmpeg executable across system PATH, imageio_ffmpeg, or common Linux install paths."""
+    # 1. System PATH
+    exe = shutil.which("ffmpeg")
+    if exe:
+        return exe
+
+    # 2. Bundled imageio-ffmpeg static binary
+    try:
+        import imageio_ffmpeg
+        exe = imageio_ffmpeg.get_ffmpeg_exe()
+        if exe and os.path.exists(exe):
+            return exe
+    except Exception:
+        pass
+
+    # 3. Common Linux install locations
+    for path in (
+        "/usr/bin/ffmpeg",
+        "/usr/local/bin/ffmpeg",
+        "/root/.nix-profile/bin/ffmpeg",
+        "/nix/var/nix/profiles/default/bin/ffmpeg"
+    ):
+        if os.path.exists(path) and os.access(path, os.X_OK):
+            return path
+
+    return None
+
 def is_ffmpeg_available() -> bool:
-    return shutil.which("ffmpeg") is not None
+    return get_ffmpeg_binary() is not None
 
 async def probe_duration(file_path: str) -> Optional[float]:
     """Get media duration in seconds using ffprobe if available."""
@@ -45,15 +73,16 @@ async def run_fast_compression(
     Compresses video to 720p HD using libx264 veryfast preset and CRF 26.
     Parses -progress pipe:1 to stream percentage, speed, and ETA.
     """
-    if not is_ffmpeg_available():
-        raise RuntimeError("ffmpeg binary not found in system PATH.")
+    ffmpeg_bin = get_ffmpeg_binary()
+    if not ffmpeg_bin:
+        raise RuntimeError("ffmpeg binary not found in system PATH or python packages.")
 
     # Probe duration if not provided
     if not duration_seconds or duration_seconds <= 0:
         duration_seconds = await probe_duration(input_path)
 
     cmd = [
-        "ffmpeg", "-y",
+        ffmpeg_bin, "-y",
         "-i", input_path,
         "-c:v", "libx264",
         "-preset", "veryfast",
