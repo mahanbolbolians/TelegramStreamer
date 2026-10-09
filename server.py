@@ -581,6 +581,11 @@ def create_app(client, bot_me, port: int) -> web.Application:
     app.router.add_route("*", "/dl/{link_id}/{filename}", handle_download)
     app.router.add_route("*", "/dl/{link_id}", handle_download)
 
+    fonts_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web", "fonts")
+    if os.path.exists(fonts_dir):
+        app.router.add_static("/fonts/", path=fonts_dir, name="fonts")
+
     return app
+
 
 
