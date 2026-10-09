@@ -7,6 +7,19 @@
 
 export default {
   async fetch(request, env, ctx) {
+    // 0. Fast preflight CORS handler
+    if (request.method === "OPTIONS") {
+      return new Response(null, {
+        status: 204,
+        headers: {
+          "Access-Control-Allow-Origin": "*",
+          "Access-Control-Allow-Methods": "GET, HEAD, POST, OPTIONS",
+          "Access-Control-Allow-Headers": "*",
+          "Access-Control-Max-Age": "86400",
+        },
+      });
+    }
+
     // 1. Resolve target Railway backend URL from environment variable or fallback
     const backendBase = (env.RAILWAY_URL || "").trim().replace(/\/+$/, "");
     if (!backendBase) {
@@ -30,12 +43,20 @@ export default {
     forwardHeaders.delete("cf-visitor");
 
     try {
-      // 3. Forward request to Railway (preserves method: GET/HEAD and Range header)
-      const upstreamResponse = await fetch(targetUrl.toString(), {
+      // 3. Forward request to Railway (preserves method, body for POST, and Range header)
+      const fetchOptions = {
         method: request.method,
         headers: forwardHeaders,
         redirect: "follow",
-      });
+      };
+
+      if (request.method !== "GET" && request.method !== "HEAD") {
+        fetchOptions.body = request.body;
+        // In Cloudflare Workers with streaming request bodies, duplex: 'half' is required
+        fetchOptions.duplex = "half";
+      }
+
+      const upstreamResponse = await fetch(targetUrl.toString(), fetchOptions);
 
       // 4. Prepare response headers preserving Range and Content headers
       const responseHeaders = new Headers(upstreamResponse.headers);

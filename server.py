@@ -1,5 +1,6 @@
 import os
 import re
+import json
 import urllib.parse
 import logging
 import secrets
@@ -38,7 +39,40 @@ def get_base_url(request: web.Request) -> str:
     port = request.app["port"]
     return f"http://{lan_ip}:{port}"
 
+CORS_HEADERS = {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS, HEAD",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization, Range, X-Requested-With",
+}
+
+async def parse_request_payload(request: web.Request) -> dict:
+    data = {}
+    # 1. Parse raw text body directly (bypasses strict content-type check)
+    try:
+        raw_text = await request.text()
+        if raw_text and raw_text.strip():
+            data = json.loads(raw_text)
+    except Exception:
+        pass
+
+    # 2. Parse form-data if sent via urlencoded or multipart
+    if not data:
+        try:
+            post_data = await request.post()
+            if post_data:
+                data = dict(post_data)
+        except Exception:
+            pass
+
+    # 3. Fallback to URL query parameters (?url=... or ?link_id=...)
+    if not data and request.query:
+        data = dict(request.query)
+
+    return data or {}
+
 async def handle_status(request: web.Request) -> web.Response:
+    if request.method == "OPTIONS":
+        return web.Response(headers=CORS_HEADERS)
     from config import config
     from compressor import is_ffmpeg_available
     bot_me = request.app.get("bot_me")
@@ -53,7 +87,7 @@ async def handle_status(request: web.Request) -> web.Response:
         "port": request.app["port"],
         "custom_domain": custom_domain,
         "ffmpeg_available": is_ffmpeg_available()
-    })
+    }, headers=CORS_HEADERS)
 
 async def handle_index(request: web.Request) -> web.Response:
     bot_me = request.app.get("bot_me")
@@ -72,6 +106,8 @@ async def handle_index(request: web.Request) -> web.Response:
     )
 
 async def handle_recent(request: web.Request) -> web.Response:
+    if request.method == "OPTIONS":
+        return web.Response(headers=CORS_HEADERS)
     recent = await database.get_recent_media(10)
     base_url = get_base_url(request)
     items = []
@@ -91,17 +127,20 @@ async def handle_recent(request: web.Request) -> web.Response:
             "adm_intent": adm_intent,
             "created_at": r.get("created_at")
         })
-    return web.json_response({"success": True, "items": items})
+    return web.json_response({"success": True, "items": items}, headers=CORS_HEADERS)
 
 async def handle_resolve(request: web.Request) -> web.Response:
-    try:
-        data = await request.json()
-    except Exception:
-        return web.json_response({"success": False, "error": "Invalid JSON payload."}, status=400)
+    if request.method == "OPTIONS":
+        return web.Response(headers=CORS_HEADERS)
 
+    data = await parse_request_payload(request)
     raw_url = (data.get("url") or "").strip()
     if not raw_url:
-        return web.json_response({"success": False, "error": "Please provide a valid Telegram message URL."}, status=400)
+        return web.json_response(
+            {"success": False, "error": "Please provide a valid Telegram message URL or Stream ID."},
+            status=400,
+            headers=CORS_HEADERS
+        )
 
     base_url = get_base_url(request)
 
@@ -130,7 +169,7 @@ async def handle_resolve(request: web.Request) -> web.Response:
                 "adm_intent": adm_intent,
                 "is_video": is_video,
                 "supports_compression": is_ffmpeg_available() and is_video
-            })
+            }, headers=CORS_HEADERS)
 
     # 2. Parse Telegram Link Syntax
     chat_target = None
@@ -151,14 +190,14 @@ async def handle_resolve(request: web.Request) -> web.Response:
         return web.json_response({
             "success": False,
             "error": "Unrecognized link format. Expected https://t.me/channel/123 or https://t.me/c/12345/67"
-        }, status=400)
+        }, status=400, headers=CORS_HEADERS)
 
     client = request.app.get("tg_client")
     if not client:
         return web.json_response({
             "success": False,
             "error": "Telegram client session is not active on this server instance."
-        }, status=503)
+        }, status=503, headers=CORS_HEADERS)
 
     try:
         source_msg = await client.get_messages(chat_target, msg_id)
@@ -170,20 +209,20 @@ async def handle_resolve(request: web.Request) -> web.Response:
             err_msg = "Bot is banned or restricted in this channel."
         else:
             err_msg = f"Telegram error: {err}"
-        return web.json_response({"success": False, "error": err_msg}, status=400)
+        return web.json_response({"success": False, "error": err_msg}, status=400, headers=CORS_HEADERS)
 
     if not source_msg:
         return web.json_response({
             "success": False,
             "error": "Message not found or deleted on Telegram."
-        }, status=404)
+        }, status=404, headers=CORS_HEADERS)
 
     kind, file_id, file_name, file_size, mime_type, duration = get_media_info(source_msg)
     if not file_id:
         return web.json_response({
             "success": False,
             "error": "No downloadable media detected in this message. Make sure the message contains a video, audio, or document."
-        }, status=400)
+        }, status=400, headers=CORS_HEADERS)
 
     link_id = secrets.token_hex(5)
     numeric_chat_id = source_msg.chat.id if hasattr(source_msg, "chat") and hasattr(source_msg.chat, "id") else 0
@@ -220,7 +259,7 @@ async def handle_resolve(request: web.Request) -> web.Response:
         "adm_intent": adm_intent,
         "is_video": is_video,
         "supports_compression": supports_compression
-    })
+    }, headers=CORS_HEADERS)
 
 async def _run_compression_task(client, record, comp_id, base_url):
     from compressor import TEMP_INPUT_DIR, COMPRESSED_DIR, run_fast_compression
@@ -294,18 +333,17 @@ async def _run_compression_task(client, record, comp_id, base_url):
                 pass
 
 async def handle_compress(request: web.Request) -> web.Response:
-    try:
-        data = await request.json()
-    except Exception:
-        return web.json_response({"success": False, "error": "Invalid JSON body"}, status=400)
+    if request.method == "OPTIONS":
+        return web.Response(headers=CORS_HEADERS)
 
-    link_id = data.get("link_id")
+    data = await parse_request_payload(request)
+    link_id = (data.get("link_id") or "").strip()
     if not link_id:
-        return web.json_response({"success": False, "error": "Missing link_id"}, status=400)
+        return web.json_response({"success": False, "error": "Missing link_id parameter."}, status=400, headers=CORS_HEADERS)
 
     record = await database.get_media(link_id)
     if not record:
-        return web.json_response({"success": False, "error": "Media record expired or not found."}, status=404)
+        return web.json_response({"success": False, "error": "Media record expired or not found."}, status=404, headers=CORS_HEADERS)
 
     base_url = get_base_url(request)
     existing = await database.get_compressed_by_original(link_id)
@@ -322,11 +360,11 @@ async def handle_compress(request: web.Request) -> web.Response:
             "comp_url": comp_url,
             "comp_intent": comp_intent,
             "readable_size": format_size(existing["file_size"])
-        })
+        }, headers=CORS_HEADERS)
 
     client = request.app.get("tg_client")
     if not client:
-        return web.json_response({"success": False, "error": "Telegram client not available."}, status=503)
+        return web.json_response({"success": False, "error": "Telegram client not available."}, status=503, headers=CORS_HEADERS)
 
     comp_id = secrets.token_hex(5)
     active_compressions[comp_id] = {
@@ -341,9 +379,11 @@ async def handle_compress(request: web.Request) -> web.Response:
         "success": True,
         "status": "processing",
         "comp_id": comp_id
-    })
+    }, headers=CORS_HEADERS)
 
 async def handle_compress_status(request: web.Request) -> web.Response:
+    if request.method == "OPTIONS":
+        return web.Response(headers=CORS_HEADERS)
     comp_id = request.match_info.get("comp_id")
     if not comp_id or comp_id not in active_compressions:
         comp = await database.get_compressed(comp_id)
@@ -358,10 +398,10 @@ async def handle_compress_status(request: web.Request) -> web.Response:
                 "comp_url": comp_url,
                 "comp_intent": comp_intent,
                 "readable_size": format_size(comp["file_size"])
-            })
-        return web.json_response({"status": "error", "error": "Task not found"}, status=404)
+            }, headers=CORS_HEADERS)
+        return web.json_response({"status": "error", "error": "Task not found"}, status=404, headers=CORS_HEADERS)
 
-    return web.json_response(active_compressions[comp_id])
+    return web.json_response(active_compressions[comp_id], headers=CORS_HEADERS)
 
 async def handle_download(request: web.Request) -> web.StreamResponse:
     link_id = request.match_info.get("link_id")
@@ -571,11 +611,11 @@ def create_app(client, bot_me, port: int) -> web.Application:
 
     app.router.add_route("*", "/", handle_index)
     app.router.add_route("*", "/status", handle_status)
-    app.router.add_route("GET", "/api/status", handle_status)
-    app.router.add_route("GET", "/api/recent", handle_recent)
-    app.router.add_route("POST", "/api/resolve", handle_resolve)
-    app.router.add_route("POST", "/api/compress", handle_compress)
-    app.router.add_route("GET", "/api/compress/status/{comp_id}", handle_compress_status)
+    app.router.add_route("*", "/api/status", handle_status)
+    app.router.add_route("*", "/api/recent", handle_recent)
+    app.router.add_route("*", "/api/resolve", handle_resolve)
+    app.router.add_route("*", "/api/compress", handle_compress)
+    app.router.add_route("*", "/api/compress/status/{comp_id}", handle_compress_status)
     app.router.add_route("*", "/dl/c/{comp_id}/{filename}", handle_compressed_download)
     app.router.add_route("*", "/dl/c/{comp_id}", handle_compressed_download)
     app.router.add_route("*", "/dl/{link_id}/{filename}", handle_download)

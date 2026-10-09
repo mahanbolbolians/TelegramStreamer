@@ -78,6 +78,22 @@ class TestHttpServer(AioHTTPTestCase):
         self.assertFalse(data["success"])
         print("[+] Verified /api/resolve rejection for invalid link syntax")
 
+    async def test_api_resolve_query_param(self):
+        # Insert dummy record
+        await database.save_media("querylink01", 12345, 678, "file_id_q", "query_test.mp4", 2048, "video/mp4")
+        resp = await self.client.request("GET", "/api/resolve?url=querylink01")
+        self.assertEqual(resp.status, 200)
+        data = await resp.json()
+        self.assertTrue(data["success"])
+        self.assertEqual(data["link_id"], "querylink01")
+        print("[+] Verified /api/resolve with GET query parameter fallback")
+
+    async def test_api_options_cors(self):
+        resp = await self.client.request("OPTIONS", "/api/resolve")
+        self.assertEqual(resp.status, 200)
+        self.assertEqual(resp.headers.get("Access-Control-Allow-Origin"), "*")
+        print("[+] Verified /api/resolve OPTIONS CORS preflight")
+
 
 if __name__ == "__main__":
     unittest.main()
