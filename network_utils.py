@@ -1,4 +1,4 @@
-﻿import socket
+import socket
 import ipaddress
 
 def get_lan_ip() -> str:
@@ -62,3 +62,24 @@ def format_size(size_bytes: int) -> str:
         size /= 1024.0
         unit_idx += 1
     return f"{size:.2f} {units[unit_idx]}"
+
+def get_media_info(message):
+    from datetime import datetime
+    for kind in ("document", "video", "audio", "voice", "animation", "photo"):
+        media = getattr(message, kind, None)
+        if media is not None:
+            if kind == "photo":
+                media = media[-1] if isinstance(media, list) else media
+                file_name = f"photo_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
+                mime_type = "image/jpeg"
+                duration = 0
+            else:
+                file_name = getattr(media, "file_name", None) or f"{kind}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.bin"
+                mime_type = getattr(media, "mime_type", "application/octet-stream")
+                duration = getattr(media, "duration", 0)
+
+            file_size = getattr(media, "file_size", 0)
+            file_id = getattr(media, "file_id", "")
+            return kind, file_id, file_name, file_size, mime_type, duration
+    return None, None, None, None, None, 0
+

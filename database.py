@@ -83,3 +83,13 @@ async def delete_compressed(comp_id: str):
         await db.execute("DELETE FROM compressed_media WHERE id = ?", (comp_id,))
         await db.commit()
 
+async def get_recent_media(limit: int = 10) -> list:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT id, file_name, file_size, mime_type, created_at FROM media_links ORDER BY created_at DESC LIMIT ?",
+            (limit,)
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [dict(r) for r in rows]
+
