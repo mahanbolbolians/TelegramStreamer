@@ -1,11 +1,26 @@
-# 🚀 TelegramStreamer — Complete Railway Deployment Guide
+# 🚀 TelegramStreamer + Cloudflare High-Speed Deployment Guide
 
-This guide explains how to set up and deploy **TelegramStreamer** to run **24/7 in the cloud for free** on Railway. 
+This guide explains how to set up the **TelegramStreamer + Cloudflare Edge Gateway** architecture to download Telegram files (up to 4 GB) at **full ISP wire speed without needing a VPN**, achieving speeds comparable to a local Iranian VPS.
 
-Once deployed:
-- No PC or laptop needs to stay turned on.
-- No VPN is required on your PC.
-- You can forward any video/file (up to 2 GB) to your bot in Telegram and download it at full speed on your phone using **ADM (Android)** or on your computer using **IDM / Browser**.
+---
+
+## 🏗️ Architecture Blueprint
+
+```text
+[ Telegram DC4 (Amsterdam) ]
+             ▲
+             │ (High-Speed MTProto Binary Stream)
+             ▼
+   [ Railway (Amsterdam) ]
+             ▲
+             │ (HTTP 206 Partial Content Stream)
+             ▼
+[ Cloudflare Worker Gateway (Custom Domain) ]
+             ▲
+             │ (8–16 Parallel ADM Threads)
+             ▼
+  [ Phone / ADM (No VPN Required) ]
+```
 
 ---
 
@@ -13,105 +28,149 @@ Once deployed:
 
 You need 4 pieces of information from Telegram:
 
-### A. Create Your Bot & Get the Bot Token
+### A. Create Your Bot
 1. Open Telegram and search for **[@BotFather](https://t.me/BotFather)**.
-2. Send the command: `/newbot`
-3. Enter a display name for your bot (e.g., `My Streamer Bot`).
-4. Enter a username ending in `bot` (e.g., `MyStreamer123_bot`).
-5. BotFather will reply with an **HTTP API Token** (looks like: `1234567890:ABCdefGhIJKlmNoPQRsTUVwxyZ`).
-   - 📌 *Save this token.*
+2. Send `/newbot`.
+3. Give it a name and username ending in `bot` (e.g. `MyFastDownloader_bot`).
+4. Copy the **HTTP API Token** (e.g. `1234567890:ABCdefGhIJKlmNoPQRsTUVwxyZ`).
 
-### B. Get Your API ID & API Hash
-1. Go to **[my.telegram.org](https://my.telegram.org)** in your web browser.
-2. Log in with your Telegram phone number (enter the confirmation code sent to your Telegram app).
-3. Click on **API development tools**.
-4. In **App title** and **Short name**, type anything (e.g. `Streamer`). Click **Create application**.
-5. You will see:
-   - **`App api_id`**: A number (e.g. `12345678`)
-   - **`App api_hash`**: A string of letters and numbers (e.g. `a1b2c3d4e5f67890abcdef1234567890`)
-   - 📌 *Save both of these.*
+### B. Get Your API ID & Hash
+1. Open **[my.telegram.org](https://my.telegram.org)** in your browser.
+2. Log in with your phone number and Telegram verification code.
+3. Click **API development tools**.
+4. Create an application (App title and short name can be anything).
+5. Copy **`App api_id`** and **`App api_hash`**.
 
-### C. Get Your Numeric Telegram User ID
-*(This acts as a whitelist so ONLY you can use your bot and no strangers can consume your bandwidth.)*
-1. In Telegram, search for **[@userinfobot](https://t.me/userinfobot)** and click **Start**.
-2. It will reply with your numeric **Id** (e.g. `987654321`).
-   - 📌 *Save this number.*
+### C. Get Your Numeric User ID (Whitelist)
+1. Search for **[@userinfobot](https://t.me/userinfobot)** in Telegram and click **Start**.
+2. Copy your numeric **Id** (e.g. `987654321`). This prevents unauthorized people from consuming your server bandwidth.
 
 ---
 
-## Step 2: Fork the GitHub Repository
+## Step 2: Fork the Repository
 
-1. Open the repository on GitHub:
-   👉 **https://github.com/mahanbolbolians/TelegramStreamer**
-2. Click the **Fork** button near the top right corner.
-3. Click **Create Fork**. 
-   *(You now have your own copy of the code under your own GitHub account).*
+1. Open: **https://github.com/mahanbolbolians/TelegramStreamer**
+2. Click **Fork** (top-right) → **Create Fork** under your own GitHub account.
 
 ---
 
-## Step 3: Create a Project on Railway
+## Step 3: Deploy to Railway (in Amsterdam)
 
-1. Go to **[railway.com](https://railway.com)**.
-2. Click **Login** and select **Login with GitHub** (use the same GitHub account where you forked the repo).
-3. On your Railway dashboard, click **+ New Project**.
-4. Select **Deploy from GitHub repo**.
-5. Choose **`TelegramStreamer`** from the list of repositories.
-6. Click **Deploy Now**.
+1. Open **[railway.com](https://railway.com)** and log in with your GitHub account.
+2. Click **+ New Project** → **Deploy from GitHub repo**.
+3. Select your forked `TelegramStreamer` repository.
+4. Click on the newly created service box to open its settings:
+   * Go to **Settings** → **General / Service Settings**.
+   * Under **Region**, select **Europe (Amsterdam / Netherlands)**.  
+     *(CRITICAL: Telegram's core European data center is in Amsterdam. Selecting Amsterdam gives you near-zero latency and maximum ingest speed).*
+   * Under **Networking**, click **Generate Domain** (e.g. `https://web-production-xxxx.up.railway.app`). Save this URL.
+5. Go to the **Variables** tab and add:
+   ```env
+   TELEGRAM_API_ID=your_api_id
+   TELEGRAM_API_HASH=your_api_hash
+   TELEGRAM_BOT_TOKEN=your_bot_token
+   TELEGRAM_CHAT_IDS=your_user_id
+   ```
+6. Click **Deploy**.
 
 ---
 
-## Step 4: Add Your Telegram Variables (Crucial)
+## Step 4: Deploy the Cloudflare Worker Gateway (Takes 1 Minute)
 
-1. Click on the newly created service box (named `web` or `TelegramStreamer`) to open its panel.
-2. Go to the **Variables** tab.
-3. Click **+ New Variable** (or click **Raw Editor** at the top right) and paste the following 4 lines:
+1. Open **[dash.cloudflare.com](https://dash.cloudflare.com)** (Free account, no credit card required).
+2. On the left sidebar, click **Workers & Pages** → **Create application** → **Create Worker**.
+3. Name it (e.g. `telegram-streamer-gateway`) and click **Deploy**.
+4. Click **Edit code** and paste the contents of `cloudflare-worker/worker.js`:
 
-```env
-TELEGRAM_API_ID=YOUR_API_ID
-TELEGRAM_API_HASH=YOUR_API_HASH
-TELEGRAM_BOT_TOKEN=YOUR_BOT_TOKEN
-TELEGRAM_CHAT_IDS=YOUR_NUMERIC_USER_ID
+```javascript
+export default {
+  async fetch(request, env) {
+    const backendBase = (env.RAILWAY_URL || "").trim().replace(/\/+$/, "");
+    if (!backendBase) {
+      return new Response("Error: RAILWAY_URL environment variable is not configured.", { status: 500 });
+    }
+
+    const clientUrl = new URL(request.url);
+    const targetUrl = new URL(clientUrl.pathname + clientUrl.search, backendBase);
+
+    const forwardHeaders = new Headers(request.headers);
+    forwardHeaders.set("Host", targetUrl.host);
+    forwardHeaders.delete("cf-connecting-ip");
+    forwardHeaders.delete("cf-ipcountry");
+    forwardHeaders.delete("cf-ray");
+    forwardHeaders.delete("cf-visitor");
+
+    try {
+      const upstreamResponse = await fetch(targetUrl.toString(), {
+        method: request.method,
+        headers: forwardHeaders,
+        redirect: "follow",
+      });
+
+      const responseHeaders = new Headers(upstreamResponse.headers);
+      responseHeaders.set("Access-Control-Allow-Origin", "*");
+      responseHeaders.set("Access-Control-Allow-Headers", "*");
+      responseHeaders.set("Access-Control-Expose-Headers", "Content-Range, Accept-Ranges, Content-Length, Content-Disposition");
+
+      return new Response(upstreamResponse.body, {
+        status: upstreamResponse.status,
+        statusText: upstreamResponse.statusText,
+        headers: responseHeaders,
+      });
+    } catch (err) {
+      return new Response(`Gateway error: ${err.message}`, { status: 502 });
+    }
+  }
+};
 ```
-
-### 💡 Example (Replace with your actual keys from Step 1):
-```env
-TELEGRAM_API_ID=12345678
-TELEGRAM_API_HASH=a1b2c3d4e5f67890abcdef1234567890
-TELEGRAM_BOT_TOKEN=1234567890:ABCdefGhIJKlmNoPQRsTUVwxyZ
-TELEGRAM_CHAT_IDS=987654321
-```
-
-4. Click **Save** / **Deploy**.
+5. Click **Save and Deploy**.
+6. Go to **Settings** → **Variables and Secrets** → **Add Variable**:
+   * **Name:** `RAILWAY_URL`
+   * **Value:** Your Railway URL from Step 3 (e.g. `https://web-production-xxxx.up.railway.app`)
+7. Click **Deploy**.
 
 ---
 
-## Step 5: Generate Public Domain & Maximize Speed
+## Step 5: Attach a Custom Domain (Bypasses Censorship Without VPN)
 
-1. While inside the service panel, click the **Settings** tab.
-2. **Generate Public Domain**:
-   - Scroll down to the **Networking** section.
-   - Click **Generate Domain**. Railway will create a public web address (e.g., `web-production-xxxx.up.railway.app`).
-3. **Change Region to Europe (Amsterdam)**:
-   - In the **Settings** tab, scroll to **General / Service Settings**.
-   - Under **Region**, select **Europe (Amsterdam / Netherlands)**.
-   - *(Why? Telegram's primary media servers for the Middle East and Europe are physically located in Amsterdam. This gives you the lowest latency and maximum download speed!)*
-4. Click **Redeploy** if prompted.
+The default `*.workers.dev` domain is blocked in Iran. Adding a custom domain routes traffic through standard Cloudflare CDN Anycast IPs that work without a VPN:
+
+1. Inside your Cloudflare Worker page, go to **Settings** → **Domains & Routes**.
+2. Click **Add Custom Domain**.
+3. Type your subdomain (e.g. `dl.yourdomain.com`).
+4. Click **Add Custom Domain** (Cloudflare creates the DNS record and SSL certificate in ~30 seconds).
 
 ---
 
-## Step 6: Test & Start Downloading!
+## Step 6: Configure the Bot to Return Cloudflare Links
 
-1. Wait about 30–60 seconds until Railway shows a **green checkmark (Active)**.
-2. Open Telegram and message your bot.
-3. Send or forward any video, movie, or file (up to 2 GB) to the bot.
-4. The bot will instantly reply with a direct download link!
-5. **How to download:**
-   - **On Android (ADM)**: Copy the link, open **Advanced Download Manager (ADM)**, tap **+**, paste the link, and hit **Start**.
-   - **On PC (IDM / Browser)**: Paste the link into **Internet Download Manager (IDM)** or your browser address bar.
+1. Open your project on **[railway.com](https://railway.com)**.
+2. Go to your service → **Variables** tab.
+3. Add a new variable:
+   * **Key:** `CUSTOM_DOMAIN`
+   * **Value:** `https://dl.yourdomain.com` *(your Cloudflare custom domain)*
+4. Click **Deploy**.
 
 ---
 
-## 💡 Good to Know:
-- **Zero Disk Usage**: The bot streams directly through RAM chunk-by-chunk. It does not store huge files on the server.
-- **Bandwidth**: Railway's free trial provides plenty of bandwidth (roughly 70–80 GB of downloads per month).
-- **Security**: Because of `TELEGRAM_CHAT_IDS`, only your authorized user ID can interact with the bot.
+## Step 7: Android Phone Optimization (Crucial for Iran)
+
+To guarantee that your phone resolves the domain without ISP DNS UDP-53 timeouts:
+
+1. Open Android **Settings** → **Network & Internet** (or **Connections** → **More connection settings**).
+2. Tap **Private DNS**.
+3. Select **Private DNS provider hostname** and enter:
+   ```text
+   dns.google
+   ```
+4. In **ADM (Advanced Download Manager)**:
+   * Settings → Downloading → Set **Threads** to **8** or **16**.
+
+---
+
+## ⚡ Features Included
+
+* **Instant Link Generation:** Forwards files up to **4.0 GB** with 0-second wait time.
+* **HTTP 206 Multi-threading:** Full chunked streaming with parallel connections in ADM.
+* **On-Demand 720p HD Compression:** An inline button (`⚡ Compress to 720p HD`) automatically shrinks large videos by ~65% using high-speed FFmpeg with live progress bars.
+* **Auto-Cleanup:** Ephemeral storage is purged automatically every 24 hours so disk space never fills up.
